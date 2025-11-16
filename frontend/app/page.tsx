@@ -4,13 +4,13 @@ import { useEffect, useRef, useState } from "react";
 // @ts-ignore
 import SimplePeer from "simple-peer";
 import { io, Socket } from "socket.io-client";
-import { 
-  Mic, 
-  Globe, 
-  Users, 
-  Wifi, 
-  WifiOff, 
-  Phone, 
+import {
+  Mic,
+  Globe,
+  Users,
+  Wifi,
+  WifiOff,
+  Phone,
   PhoneOff,
   Volume2,
   Loader2,
@@ -25,20 +25,42 @@ export default function Home() {
   const [clientId, setClientId] = useState("");
   const [recording, setRecording] = useState(false);
   const [translating, setTranslating] = useState(false);
-  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(
+    null
+  );
   const [connected, setConnected] = useState(false);
   const [peerConnected, setPeerConnected] = useState(false);
   const [sourceLang, setSourceLang] = useState("et");
   const [targetLang, setTargetLang] = useState("en");
-  const [lastAudioUrl, setLastAudioUrl] = useState<string | null>(null);
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  const [translations, setTranslations] = useState<Array<{
-    original: string;
-    translated: string;
-    sourceLang: string;
-    targetLang: string;
-    timestamp: Date;
-  }>>([]);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [isRecording, setIsRecording] = useState(false);
+  const [peerIsRecording, setPeerIsRecording] = useState(false);
+  const [pendingAudio, setPendingAudio] = useState<string | null>(null);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const unlockAudio = () => {
+    if (!audioUnlocked) {
+      // Play silent audio to unlock
+      const silentAudio = new Audio(
+        "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAADhAC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAQKAAAAAAAAA4SG6YdQAAAAAAD/+xDEAAADSAZAAP4QMACEAD9wAAAPb+SgaUoIOFJPPPPPPPPPP"
+      );
+      silentAudio
+        .play()
+        .then(() => {
+          setAudioUnlocked(true);
+          console.log("✅ Audio unlocked!");
+        })
+        .catch(() => {});
+    }
+  };
+  const [translations, setTranslations] = useState<
+    Array<{
+      original: string;
+      translated: string;
+      sourceLang: string;
+      targetLang: string;
+      timestamp: Date;
+    }>
+  >([]);
 
   const socketRef = useRef<Socket | null>(null);
   const peerRef = useRef<SimplePeer.Instance | null>(null);
@@ -69,6 +91,8 @@ export default function Home() {
       alert("Please enter a room ID");
       return;
     }
+
+    unlockAudio();
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -134,6 +158,54 @@ export default function Home() {
       setConnected(false);
       setPeerConnected(false);
     });
+
+    socket.on("peer-recording-started", () => {
+      console.log("🎙️ Peer started recording");
+      setPeerIsRecording(true);
+    });
+
+    socket.on("peer-recording-stopped", () => {
+      console.log("🎙️ Peer stopped recording");
+      setPeerIsRecording(false);
+    });
+
+    socket.on("translated-audio", async ({ audioData }) => {
+      console.log("🔊 Received translated audio from peer");
+      console.log("📦 Audio data length:", audioData?.length);
+
+      const audio = new Audio(audioData);
+
+      audio.onended = () => {
+        setTranslating(false);
+        setPendingAudio(null);
+      };
+
+      setTranslating(true);
+      try {
+        // audioData is already a base64 data URL (data:audio/mpeg;base64,...)
+        const audio = new Audio(audioData);
+
+        audio.oncanplaythrough = () => {
+          console.log("✅ Audio ready to play");
+        };
+
+        audio.onended = () => {
+          console.log("✅ Audio finished playing");
+          setTranslating(false);
+        };
+
+        audio.onerror = (e) => {
+          console.error("❌ Audio playback error:", e);
+          setTranslating(false);
+        };
+
+        await audio.play();
+        console.log("▶️ Playing translated audio...");
+      } catch (error) {
+        console.error("❌ Error playing audio:", error);
+        setTranslating(false);
+      }
+    });
   };
 
   const createPeer = (initiator: boolean, targetId: string, offer?: any) => {
@@ -152,7 +224,10 @@ export default function Home() {
       } else if (data.type === "answer") {
         socketRef.current.emit("answer", { target: targetId, answer: data });
       } else {
-        socketRef.current.emit("ice-candidate", { target: targetId, candidate: data });
+        socketRef.current.emit("ice-candidate", {
+          target: targetId,
+          candidate: data,
+        });
       }
     });
 
@@ -206,6 +281,10 @@ export default function Home() {
   const startRecording = async () => {
     if (!localStreamRef.current || recording) return;
 
+    if (socketRef.current) {
+      socketRef.current.emit("recording-started", { roomId });
+    }
+
     const mimeType = MediaRecorder.isTypeSupported("audio/wav")
       ? "audio/wav"
       : MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -223,6 +302,12 @@ export default function Home() {
 
     recorder.onstop = async () => {
       setTranslating(true);
+
+      // Notify peer that you stopped recording
+      if (socketRef.current) {
+        socketRef.current.emit("recording-stopped", { roomId });
+      }
+
       const audioBlob = new Blob(audioChunks, { type: mimeType });
 
       if (audioBlob.size < 1000) {
@@ -251,36 +336,43 @@ export default function Home() {
             return;
           }
 
-          const audioUrl = URL.createObjectURL(audioData);
-          setLastAudioUrl(audioUrl);
+          // Convert blob to base64 for socket.io
+          const reader = new FileReader();
+          reader.readAsDataURL(audioData);
+          reader.onloadend = () => {
+            const base64data = reader.result;
 
-          setTranslations(prev => [{
-            original: "Your speech",
-            translated: "Translation",
-            sourceLang,
-            targetLang,
-            timestamp: new Date()
-          }, ...prev].slice(0, 5));
+            // Send translated audio to peer (NOT play locally!)
+            if (socketRef.current) {
+              socketRef.current.emit("translated-audio", {
+                roomId,
+                audioData: base64data,
+              });
+            }
 
-          const audio = new Audio(audioUrl);
-          audio.volume = 1.0;
+            console.log("✅ Sent translated audio to peer");
+            setTranslating(false);
 
-          audio.onended = () => {
-            URL.revokeObjectURL(audioUrl);
+            setTranslations((prev) =>
+              [
+                {
+                  original: "Your speech",
+                  translated: "Sent to peer",
+                  sourceLang,
+                  targetLang,
+                  timestamp: new Date(),
+                },
+                ...prev,
+              ].slice(0, 5)
+            );
           };
-
-          try {
-            await audio.play();
-          } catch (err) {
-            console.error("❌ Play failed:", err);
-          }
         } else {
           alert("Translation failed. Check console.");
+          setTranslating(false);
         }
       } catch (error) {
         console.error("Translation error:", error);
         alert("Translation error. Check console.");
-      } finally {
         setTranslating(false);
       }
     };
@@ -418,6 +510,17 @@ export default function Home() {
                   </div>
                 </div>
 
+                {peerIsRecording && (
+                  <div className="bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-400 dark:border-yellow-600 rounded-lg p-3 mb-4">
+                    <div className="flex items-center space-x-2">
+                      <Mic className="w-5 h-5 text-yellow-600 animate-pulse" />
+                      <span className="text-sm text-yellow-800 dark:text-yellow-200 font-medium">
+                        Peer is recording...
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 <button
                   onClick={startRecording}
                   disabled={recording || translating}
@@ -454,21 +557,31 @@ export default function Home() {
                   {languageOptions.find((l) => l.value === targetLang)?.flag}{" "}
                   {targetLang.toUpperCase()}
                 </p>
+              </div>
+            )}
 
-                {lastAudioUrl && (
-                  <div className="alert-success mt-6">
-                    <div className="alert-success-content mb-2">
-                      <CheckCircle className="w-5 h-5 text-green-600" />
-                      <p className="alert-title">Translation Ready!</p>
+            {pendingAudio && (
+              <div className="card animate-fadeIn">
+                <div className="bg-blue-100 dark:bg-blue-900/30 border border-blue-400 dark:border-blue-600 rounded-lg p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <Volume2 className="w-6 h-6 text-blue-600 animate-pulse" />
+                      <span className="font-semibold text-blue-900 dark:text-blue-100">
+                        Translation Ready! Tap to play →
+                      </span>
                     </div>
-                    <audio
-                      src={lastAudioUrl}
-                      controls
-                      autoPlay
-                      className="w-full mt-2"
-                    />
+                    <button
+                      onClick={async () => {
+                        const audio = new Audio(pendingAudio);
+                        audio.onended = () => setPendingAudio(null);
+                        await audio.play();
+                      }}
+                      className="btn btn-success px-6"
+                    >
+                      ▶️ Play
+                    </button>
                   </div>
-                )}
+                </div>
               </div>
             )}
 
@@ -495,10 +608,25 @@ export default function Home() {
                         <span>{t.timestamp.toLocaleTimeString()}</span>
                       </div>
                       <div className="space-y-1">
-                        <p className="translation-original">{t.original}</p>
+                        <p className="translation-original">
+                          You spoke in{" "}
+                          {
+                            languageOptions.find(
+                              (l) => l.value === t.sourceLang
+                            )?.label
+                          }
+                        </p>
                         <div className="flex items-center space-x-2">
                           <Volume2 className="w-4 h-4 text-indigo-600" />
-                          <p className="translation-result">{t.translated}</p>
+                          <p className="translation-result">
+                            Translated to{" "}
+                            {
+                              languageOptions.find(
+                                (l) => l.value === t.targetLang
+                              )?.label
+                            }{" "}
+                            for peer
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -571,7 +699,9 @@ export default function Home() {
             </div>
 
             <div className="info-card animate-fadeIn">
-              <h3 className="info-title"><Lightbulb className="w-5 h-5 inline-block mr-2" /> How it works</h3>
+              <h3 className="info-title">
+                <Lightbulb className="w-5 h-5 inline-block mr-2" /> How it works
+              </h3>
               <ul className="info-list">
                 <li className="info-list-item">
                   <span className="info-list-number">1</span>
