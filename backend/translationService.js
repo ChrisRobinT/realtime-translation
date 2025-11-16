@@ -21,8 +21,6 @@ class TranslationService {
 
     this.azureTranslateKey = process.env.AZURE_TRANSLATE_KEY;
     this.azureTranslateRegion = process.env.AZURE_TRANSLATE_REGION;
-
-    this.elevenlabsKey = process.env.ELEVENLABS_API_KEY;
   }
 
   // Convert WebM → WAV
@@ -52,7 +50,7 @@ class TranslationService {
   // Whisper STT
   async transcribeWhisper(wavPath, language = "et") {
     try {
-      console.log(`🧠 Whisper STT: transcribing Estonian...`);
+      console.log(`🧠 Whisper STT: transcribing ${language}...`);
 
       const result = await this.openai.audio.transcriptions.create({
         model: "whisper-1",
@@ -69,12 +67,12 @@ class TranslationService {
   }
 
   // Azure Text Translation
-  async translateTextAzure(text, toLang = "en") {
+  async translateTextAzure(text, fromLang, toLang) {
     try {
-      console.log(`🌐 Translating: "${text}" → ${toLang}`);
+      console.log(`🌐 Translating: "${text}" (${fromLang} → ${toLang})`);
 
       const response = await axios.post(
-        `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=${toLang}`,
+        `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&from=${fromLang}&to=${toLang}`,
         [{ Text: text }],
         {
           headers: {
@@ -97,7 +95,7 @@ class TranslationService {
     }
   }
 
-  // Replace synthesizeSpeech in translationService.js
+  // Azure Neural TTS
   async synthesizeSpeech(
     text,
     outputFile = "translated_output.mp3",
@@ -115,6 +113,7 @@ class TranslationService {
         en: "en-US-JennyNeural",
         et: "et-EE-AnuNeural",
         es: "es-ES-ElviraNeural",
+        de: "de-DE-KatjaNeural",
       };
 
       speechConfig.speechSynthesisVoiceName =
@@ -150,7 +149,7 @@ class TranslationService {
     }
   }
 
-  // Full Pipeline: Estonian Audio → English Audio
+  // Full Pipeline: Audio (sourceLang) → Translated Audio (targetLang)
   async fullPipeline(inputWebm, sourceLang = "et", targetLang = "en") {
     try {
       console.log(`🚀 Starting ${sourceLang} → ${targetLang} pipeline`);
@@ -166,25 +165,31 @@ class TranslationService {
 
       const wavPath = inputWebm + ".wav";
 
-      // Step 1: Convert
+      // Step 1: Convert WebM to WAV
       await this.convertWebMToWav(inputWebm, wavPath);
 
-      // Step 2: Whisper STT (Estonian)
-      const estonianText = await this.transcribeWhisper(wavPath, sourceLang);
-      if (!estonianText) {
+      // Step 2: Whisper STT (transcribe in source language)
+      const transcribedText = await this.transcribeWhisper(wavPath, sourceLang);
+      if (!transcribedText) {
         await fsp.unlink(wavPath).catch(() => {});
         return "";
       }
 
-      // Step 3: Translate Estonian → English
-      const englishText = await this.translateTextAzure(
-        estonianText,
+      // Step 3: Translate (sourceLang → targetLang)
+      const translatedText = await this.translateTextAzure(
+        transcribedText,
+        sourceLang,
         targetLang
       );
 
-      // Step 4: TTS (English)
-      const outputMp3 = await this.synthesizeSpeech(englishText, "translated_output.mp3", targetLang);
+      // Step 4: TTS (synthesize in target language)
+      const outputMp3 = await this.synthesizeSpeech(
+        translatedText,
+        "translated_output.mp3",
+        targetLang
+      );
 
+      // Cleanup
       await fsp.unlink(wavPath).catch(() => {});
 
       return outputMp3;
