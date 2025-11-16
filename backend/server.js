@@ -164,6 +164,22 @@ io.on("connection", (socket) => {
     forwardSignal(socket, data.target, "ice-candidate", data.candidate);
   });
 
+    socket.on("recording-started", ({ roomId }) => {
+    console.log(`🎙️ User ${socket.id} started recording in room ${roomId}`);
+    socket.to(roomId).emit("peer-recording-started");
+  });
+
+  socket.on("recording-stopped", ({ roomId }) => {
+    console.log(`🎙️ User ${socket.id} stopped recording in room ${roomId}`);
+    socket.to(roomId).emit("peer-recording-stopped");
+  });
+
+  socket.on("translated-audio", ({ roomId, audioData }) => {
+    console.log(`🔊 Relaying translated audio in room ${roomId}`);
+    console.log(`📦 Audio data size: ${audioData.length} bytes`);
+    socket.to(roomId).emit("translated-audio", { audioData });
+  });
+
   socket.on("disconnect", () => {
     console.log(`❌ Client disconnected: ${socket.id}`);
 
@@ -179,6 +195,7 @@ io.on("connection", (socket) => {
       rooms.delete(roomId);
       console.log(`🗑 Room ${roomId} removed (empty)`);
     }
+    
 
     socket.to(roomId).emit("peer-left", { peerId: clientId });
   });
