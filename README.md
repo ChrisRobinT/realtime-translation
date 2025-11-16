@@ -9,8 +9,6 @@
 
 A WebRTC-based real-time audio translation application that enables seamless voice communication across language barriers. Connect with anyone, speak in your language, and let AI handle the translation instantly.
 
-![App Demo](screenshots/demo-light.png)
-
 ## ✨ Features
 
 - 🎙️ **Real-Time P2P Voice** - Low-latency peer-to-peer communication via WebRTC
@@ -28,7 +26,7 @@ A WebRTC-based real-time audio translation application that enables seamless voi
 
 <table>
   <tr>
-    <td><img src="screenshots/desktop-light.jpg" alt="Light Mode" /></td>
+    <td><img src="screenshots/desktop-light.png" alt="Light Mode" /></td>
     <td><img src="screenshots/desktop-dark.png" alt="Dark Mode" /></td>
   </tr>
   <tr>
@@ -42,10 +40,10 @@ A WebRTC-based real-time audio translation application that enables seamless voi
 <table>
   <tr>
     <td align="center">
-      <img src="screenshots/mobile-dark.png" width="300"/>
+      <img src="screenshots/mobile-dark.jpg" width="300"/>
     </td>
     <td align="center">
-      <img src="screenshots/mobile-light.png" width="300"/>
+      <img src="screenshots/mobile-light.PNG" width="300"/>
     </td>
   </tr>
   <tr>
